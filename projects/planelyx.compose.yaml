@@ -1,0 +1,8 @@
+networks:
+  planelyx:
+    external: true
+    name: ${PLANELYX_NETWORK:?set PLANELYX_NETWORK}
+
+services:
+  prometheus:
+    networks: [monitoring, planelyx]

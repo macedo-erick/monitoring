@@ -1,0 +1,77 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+discovery.docker "containers" {
+  host             = "tcp://socket-proxy:2375"
+  refresh_interval = "15s"
+}
+
+discovery.relabel "containers" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "tcp://socket-proxy:2375"
+  targets       = discovery.docker.containers.targets
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.default.receiver]
+}
+
+loki.process "default" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.match {
+    selector = "{service=\"api\"}"
+
+    stage.multiline {
+      firstline     = "^\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}"
+      max_wait_time = "3s"
+      max_lines     = 256
+    }
+  }
+
+  stage.match {
+    selector = "{service=\"ocr\"}"
+
+    stage.json {
+      expressions = { level = "level" }
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"10\" }}trace{{ else if eq .Value \"20\" }}debug{{ else if eq .Value \"30\" }}info{{ else if eq .Value \"40\" }}warn{{ else if eq .Value \"50\" }}error{{ else if eq .Value \"60\" }}fatal{{ else }}unknown{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+
+  external_labels = {
+    host = sys.env("MONITORING_HOST"),
+  }
+}

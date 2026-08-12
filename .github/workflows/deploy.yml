@@ -1,0 +1,240 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-monitoring
+  cancel-in-progress: false
+
+env:
+  VPS_PATH: monitoring
+  PUBLIC_URL: https://monitoring.macedosoftware.com
+  NEIGHBOUR_URL: https://planelyx.com/ui/
+  WAIT_TIMEOUT: '300'
+  PAYLOAD: compose.yaml projects prometheus loki alloy grafana nginx
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate inputs
+        env:
+          GF_SECURITY_ADMIN_PASSWORD: ${{ secrets.GF_SECURITY_ADMIN_PASSWORD }}
+          PLANELYX_NETWORK: ${{ vars.PLANELYX_NETWORK }}
+          MONITORING_HOST: ${{ vars.MONITORING_HOST }}
+        run: |
+          set -euo pipefail
+          fail=0
+
+          for name in GF_SECURITY_ADMIN_PASSWORD PLANELYX_NETWORK MONITORING_HOST; do
+              value=${!name}
+              if [[ -z $value ]]; then
+                  echo "::error::$name is empty or not set. See VPS_SETUP.md."
+                  fail=1
+              elif [[ $value == *"'"* ]]; then
+                  echo "::error::$name contains a single quote, which cannot be represented in a Compose .env value."
+                  fail=1
+              fi
+          done
+
+          (( fail == 0 )) || exit 1
+
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > ~/.ssh/deploy_known_hosts
+
+          {
+              echo "SSH_OPTS=-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/deploy_known_hosts -i $HOME/.ssh/deploy_key"
+              echo "REMOTE=$VPS_USER@$VPS_HOST"
+          } >> "$GITHUB_ENV"
+
+      - name: Ship the config tree
+        run: |
+          set -euo pipefail
+          ssh $SSH_OPTS "$REMOTE" "rm -rf '$VPS_PATH/.staged' && mkdir -p '$VPS_PATH/.staged'"
+          tar -cz $PAYLOAD | ssh $SSH_OPTS "$REMOTE" "tar -xz -C '$VPS_PATH/.staged'"
+          echo "Shipped ${GITHUB_SHA:0:7}"
+
+      - name: Stage the rendered .env
+        env:
+          GF_SECURITY_ADMIN_PASSWORD: ${{ secrets.GF_SECURITY_ADMIN_PASSWORD }}
+          PLANELYX_NETWORK: ${{ vars.PLANELYX_NETWORK }}
+          MONITORING_HOST: ${{ vars.MONITORING_HOST }}
+          PROM_RETENTION_TIME: ${{ vars.PROM_RETENTION_TIME }}
+          PROM_RETENTION_SIZE: ${{ vars.PROM_RETENTION_SIZE }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          rendered=$(
+              printf '# Rendered by .github/workflows/deploy.yml (run %s). Hand edits are lost.\n' "$GITHUB_RUN_ID"
+              printf 'COMPOSE_FILE=compose.yaml:projects/planelyx.compose.yaml\n'
+              printf 'PROM_TARGETS_DIR=./prometheus/targets/prod\n'
+              printf 'GF_SERVER_ROOT_URL=%s\n' "$PUBLIC_URL"
+              printf "GF_SECURITY_ADMIN_PASSWORD='%s'\n" "$GF_SECURITY_ADMIN_PASSWORD"
+              printf 'PLANELYX_NETWORK=%s\n' "$PLANELYX_NETWORK"
+              printf 'MONITORING_HOST=%s\n' "$MONITORING_HOST"
+              printf 'PROM_RETENTION_TIME=%s\n' "${PROM_RETENTION_TIME:-30d}"
+              printf 'PROM_RETENTION_SIZE=%s\n' "${PROM_RETENTION_SIZE:-8GB}"
+          )
+
+          printf '%s\n' "$rendered" \
+              | ssh $SSH_OPTS "$REMOTE" "umask 077 && cat > '$VPS_PATH/.env.staged'"
+
+          echo "Staged .env (contents deliberately not logged)."
+
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP:-/tmp}/deploy-remote.log"
+
+          ssh $SSH_OPTS "$REMOTE" bash -s -- "$VPS_PATH" "$WAIT_TIMEOUT" $PAYLOAD <<'REMOTE_SCRIPT' | tee "$log"
+          set -euo pipefail
+          cd "$1"
+          wait_timeout=$2
+          shift 2
+          payload=("$@")
+
+          cp .env .env.prev 2>/dev/null || true
+          mv .env.staged .env
+
+          # Replace each shipped path wholesale so deletions propagate, while leaving
+          # .env and the Docker volumes alone.
+          for item in "${payload[@]}"; do
+              rm -rf "./$item"
+              cp -a ".staged/$item" "./$item"
+          done
+          rm -rf .staged
+
+          docker compose pull -q
+          docker compose up -d --wait --wait-timeout "$wait_timeout" --remove-orphans
+
+          docker image prune -f || true
+          echo
+          docker compose ps
+          echo DEPLOY_SCRIPT_COMPLETE
+          REMOTE_SCRIPT
+
+          grep -qx DEPLOY_SCRIPT_COMPLETE "$log" || {
+              echo "::error::The remote deploy script did not run to completion — its closing sentinel never arrived, so the stack may be half-updated."
+              exit 1
+          }
+
+      - name: Install the nginx vhost
+        run: |
+          set -euo pipefail
+
+          ssh $SSH_OPTS "$REMOTE" bash -s -- "$VPS_PATH" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          cd "$1"
+          new=nginx/monitoring.conf
+          live=/etc/nginx/sites-available/monitoring.conf
+
+          if [[ ! -e $live ]]; then
+              echo "error: $live does not exist. Run the bootstrap in VPS_SETUP.md first." >&2
+              exit 1
+          fi
+
+          if cmp -s "$new" "$live"; then
+              echo "nginx: vhost unchanged, not reloading"
+              exit 0
+          fi
+
+          cp "$live" nginx/monitoring.conf.prev
+          cp "$new" "$live"
+
+          # Validate before reloading: this nginx also serves planelyx.com, so a bad
+          # config here must never reach the running process.
+          if ! sudo nginx -t; then
+              cp nginx/monitoring.conf.prev "$live"
+              echo "error: nginx -t failed; previous vhost restored, nginx not reloaded" >&2
+              exit 1
+          fi
+
+          sudo systemctl reload nginx
+          echo "nginx: vhost updated and reloaded"
+          REMOTE_SCRIPT
+
+      - name: Smoke checks
+        run: |
+          set -euo pipefail
+          fail=0
+
+          probe() {
+              local name=$1 url=$2
+              if ssh $SSH_OPTS "$REMOTE" "curl -fsS --retry 10 --retry-delay 3 -o /dev/null '$url'"; then
+                  echo "$name: ok"
+              else
+                  echo "::error::$name: $url did not respond."
+                  fail=1
+              fi
+          }
+
+          probe prometheus http://127.0.0.1:9090/-/ready
+          probe loki       http://127.0.0.1:3100/ready
+          probe grafana    http://127.0.0.1:3000/api/health
+
+          # The check that actually catches a missing network join, a renamed compose
+          # service, or an app that shipped without its metrics endpoint.
+          down=$(ssh $SSH_OPTS "$REMOTE" \
+              "curl -fsS 'http://127.0.0.1:9090/api/v1/targets?state=any'" \
+              | jq -r '[.data.activeTargets[] | select(.health != "up") | "\(.labels.job) (\(.scrapeUrl)): \(.lastError)"] | .[]')
+
+          if [[ -n $down ]]; then
+              echo "::error::Prometheus targets are not up:"
+              printf '  %s\n' "$down"
+              fail=1
+          else
+              echo "targets: all up"
+          fi
+
+          if curl -fsS --retry 10 --retry-delay 3 -o /dev/null "$PUBLIC_URL/login"; then
+              echo "public: $PUBLIC_URL/login serves"
+          else
+              echo "::error::public: $PUBLIC_URL/login did not respond."
+              fail=1
+          fi
+
+          # The nginx reload touched a process shared with planelyx.
+          if curl -fsS --retry 5 --retry-delay 3 -o /dev/null "$NEIGHBOUR_URL"; then
+              echo "neighbour: $NEIGHBOUR_URL still serves"
+          else
+              echo "::error::neighbour: $NEIGHBOUR_URL broke after the nginx reload."
+              fail=1
+          fi
+
+          (( fail == 0 )) || exit 1
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          if [[ -n ${REMOTE:-} ]]; then
+              ssh $SSH_OPTS "$REMOTE" "cd '$VPS_PATH' && docker compose logs --tail 50" || true
+          fi
+
+      - name: Clean up
+        if: always()
+        run: |
+          if [[ -n ${REMOTE:-} ]]; then
+              ssh $SSH_OPTS "$REMOTE" "rm -rf '$VPS_PATH/.staged' '$VPS_PATH/.env.staged'" || true
+          fi
+          rm -f ~/.ssh/deploy_key ~/.ssh/deploy_known_hosts
