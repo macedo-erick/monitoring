@@ -126,7 +126,7 @@ jobs:
           rm -rf .staged
 
           docker compose pull -q
-          docker compose up -d --wait --wait-timeout "$wait_timeout" --remove-orphans
+          docker compose up -d --force-recreate --wait --wait-timeout "$wait_timeout" --remove-orphans
 
           docker image prune -f || true
           echo
