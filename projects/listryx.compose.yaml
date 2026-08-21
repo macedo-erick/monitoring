@@ -1,0 +1,8 @@
+networks:
+  listryx:
+    external: true
+    name: ${LISTRYX_NETWORK:?set LISTRYX_NETWORK}
+
+services:
+  prometheus:
+    networks: [monitoring, listryx]

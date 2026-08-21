@@ -39,7 +39,7 @@ loki.process "default" {
   forward_to = [loki.write.default.receiver]
 
   stage.match {
-    selector = "{service=\"api\"}"
+    selector = "{project=~\"planelyx|planelyx-api\", service=\"api\"}"
 
     stage.multiline {
       firstline     = "^\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}"
@@ -49,7 +49,24 @@ loki.process "default" {
   }
 
   stage.match {
-    selector = "{service=\"ocr\"}"
+    selector = "{project=~\"planelyx|planelyx-ocr\", service=\"ocr\"}"
+
+    stage.json {
+      expressions = { level = "level" }
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"10\" }}trace{{ else if eq .Value \"20\" }}debug{{ else if eq .Value \"30\" }}info{{ else if eq .Value \"40\" }}warn{{ else if eq .Value \"50\" }}error{{ else if eq .Value \"60\" }}fatal{{ else }}unknown{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+
+  stage.match {
+    selector = "{project=\"listryx\", service=\"api\"}"
 
     stage.json {
       expressions = { level = "level" }
