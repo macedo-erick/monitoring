@@ -4,7 +4,7 @@
     project: planelyx
     __metrics_path__: /actuator/prometheus
 
-- targets: ['ocr:8080']
+- targets: ['planelyx-api-ocr-1:8080']
   labels:
     job: planelyx-ocr
     project: planelyx

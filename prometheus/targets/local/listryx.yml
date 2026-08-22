@@ -1,4 +1,4 @@
-- targets: ['listryx-api-1:8080']
+- targets: ['listryx-api:8080']
   labels:
     job: listryx-api
     project: listryx
