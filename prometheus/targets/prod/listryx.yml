@@ -1,0 +1,5 @@
+- targets: ['api:8080']
+  labels:
+    job: listryx-api
+    project: listryx
+    __metrics_path__: /metrics
