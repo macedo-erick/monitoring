@@ -14,13 +14,18 @@ Throughout, `$VPS_USER` is the SSH user GitHub Actions deploys as.
 docker --version && docker compose version
 nginx -v && certbot --version
 sudo ufw status                       # expect 22, 80, 443 and nothing else
-docker network ls | grep planelyx     # note the exact name
+docker network ls | grep -E 'planelyx|listryx|auth'   # note the exact names
 ```
 
-The network name is what `PLANELYX_NETWORK` must be set to. On a box running
-`compose.prod.yaml` (project `planelyx`, network key `planelyx`) it is
-`planelyx_planelyx`. Do not guess it — a wrong value fails at `up` with
-"network not found".
+Those names are what `PLANELYX_NETWORK`, `LISTRYX_NETWORK` and `AUTH_NETWORK`
+must be set to — one per network Prometheus has to reach into. On a box running
+`compose.prod.yaml` (project `planelyx`, network key `planelyx`) the first is
+`planelyx_planelyx`. Do not guess any of them — a wrong value fails at `up`
+with "network not found".
+
+Note that Keycloak is deployed as its own compose project rather than as part of
+planelyx, so it is a third network (`auth_auth`) and a tenant in its own right,
+labelled `project="auth"`.
 
 Nothing here needs a port opened. Every service binds `127.0.0.1`, and the only
 public entry point is nginx on 443. Publishing a container port on `0.0.0.0`
@@ -126,6 +131,8 @@ Repository → Settings → Environments → `production`.
 | Name | Value |
 |---|---|
 | `PLANELYX_NETWORK` | From step 1, e.g. `planelyx_planelyx` |
+| `LISTRYX_NETWORK` | From step 1, the listryx network |
+| `AUTH_NETWORK` | From step 1, the Keycloak network, e.g. `auth_auth` |
 | `MONITORING_HOST` | A name for this box; becomes the `host` label on every log line |
 | `PROM_RETENTION_TIME` | Optional, default `30d` |
 | `PROM_RETENTION_SIZE` | Optional, default `8GB` |

@@ -1,0 +1,5 @@
+- targets: ['auth-keycloak-1:9000']
+  labels:
+    job: auth-keycloak
+    project: auth
+    __metrics_path__: /metrics
