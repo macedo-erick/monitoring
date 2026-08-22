@@ -1,4 +1,4 @@
-- targets: ['keycloak:9000']
+- targets: ['planelyx-api-keycloak-1:9000']
   labels:
     job: auth-keycloak
     project: auth

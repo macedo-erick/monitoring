@@ -25,19 +25,32 @@ Then <http://localhost:3000> — user `admin`, password from `.env`.
 `.env` selects the environment. Locally it points at the dev networks and
 `prometheus/targets/local/`; the deploy workflow renders the prod equivalent.
 
-Two things behave differently locally, because those dev stacks are shaped
-differently — not because the monitoring config forks:
+Both environments follow the same rule — **address every target by its container
+name, never by a compose service name** (see *Adding a project* for why). The two
+files still differ, because the dev stacks are shaped differently and so their
+containers are named differently:
+
+| target | prod | local |
+| --- | --- | --- |
+| planelyx API | `planelyx-api-1` | `host.docker.internal` — runs from the IDE |
+| planelyx OCR | `planelyx-ocr-1` | `planelyx-api-ocr-1` |
+| Keycloak | `auth-keycloak-1` | `planelyx-api-keycloak-1` |
+| listryx API | `listryx-api-1` | `listryx-api` — pins `container_name` |
+
+Two consequences worth knowing:
 
 - planelyx's Spring API runs from the IDE on the host, so it is scraped through
   `host.docker.internal` and its **logs are not collected** (Alloy only sees
   containers).
-- Keycloak is its own compose project in prod (`auth_auth`), so `.env` there
-  loads `projects/auth.compose.yaml`. Locally the target file assumes it is
-  reachable on a network Prometheus already joins. If your local Keycloak also
-  runs as a separate project, add the override and `AUTH_NETWORK` to `.env` too.
+- Keycloak is its own compose project in prod (`auth`), so `.env` there loads
+  `projects/auth.compose.yaml`. Locally it is just a service inside the
+  `planelyx-api` dev stack, on a network Prometheus already joins. If your local
+  Keycloak *does* run as a separate project, point the target file at its
+  container and add the override and `AUTH_NETWORK` to `.env` too.
 
-listryx has neither quirk: its whole dev stack runs in compose under a pinned
-project name, so its target file is byte-identical in both environments.
+Addressing Keycloak as plain `keycloak:9000` locally used to look like it worked
+and quietly scraped **listryx's** Keycloak instead — Prometheus sits on every
+tenant's network at once, and listryx's dev stack has a `keycloak` service too.
 
 `auth` is a tenant in its own right, not part of planelyx. Keycloak is a
 third-party service that happens to authenticate planelyx, it is deployed and
