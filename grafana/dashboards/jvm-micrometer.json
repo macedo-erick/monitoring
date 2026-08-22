@@ -21,7 +21,7 @@
       }
     ]
   },
-  "description": "JVM and HTTP metrics for the Micrometer-instrumented services on this box (planelyx-api via Spring Boot Actuator, planelyx-auth via Quarkus). Keyed on the job and instance labels Prometheus attaches from prometheus/targets/<env>/*.yml \u2014 deliberately not on an `application` label, which nothing here emits.",
+  "description": "JVM and HTTP metrics for the Micrometer-instrumented services on this box (planelyx-api via Spring Boot Actuator, auth-keycloak via Quarkus). Keyed on the job and instance labels Prometheus attaches from prometheus/targets/<env>/*.yml \u2014 deliberately not on an `application` label, which nothing here emits.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -112,7 +112,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "up{project=\"planelyx\"}",
+          "expr": "up{project=~\"planelyx|auth\"}",
           "range": false,
           "instant": true,
           "refId": "A",
@@ -893,7 +893,7 @@
       ],
       "title": "Request rate by status",
       "type": "timeseries",
-      "description": "Spring Boot only. Keycloak reports its own http_server_requests series but with Quarkus label values, so this row stays sparse for planelyx-auth."
+      "description": "Spring Boot only. Keycloak reports its own http_server_requests series but with Quarkus label values, so this row stays sparse for auth-keycloak."
     },
     {
       "datasource": {
@@ -2906,7 +2906,7 @@
           ],
           "title": "Hikari connections",
           "type": "timeseries",
-          "description": "planelyx-api only \u2014 Keycloak does not use HikariCP, so this row is empty for planelyx-auth."
+          "description": "planelyx-api only \u2014 Keycloak does not use HikariCP, so this row is empty for auth-keycloak."
         },
         {
           "datasource": {

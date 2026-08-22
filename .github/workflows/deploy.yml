@@ -30,12 +30,14 @@ jobs:
         env:
           GF_SECURITY_ADMIN_PASSWORD: ${{ secrets.GF_SECURITY_ADMIN_PASSWORD }}
           PLANELYX_NETWORK: ${{ vars.PLANELYX_NETWORK }}
+          LISTRYX_NETWORK: ${{ vars.LISTRYX_NETWORK }}
+          AUTH_NETWORK: ${{ vars.AUTH_NETWORK }}
           MONITORING_HOST: ${{ vars.MONITORING_HOST }}
         run: |
           set -euo pipefail
           fail=0
 
-          for name in GF_SECURITY_ADMIN_PASSWORD PLANELYX_NETWORK MONITORING_HOST; do
+          for name in GF_SECURITY_ADMIN_PASSWORD PLANELYX_NETWORK LISTRYX_NETWORK AUTH_NETWORK MONITORING_HOST; do
               value=${!name}
               if [[ -z $value ]]; then
                   echo "::error::$name is empty or not set. See VPS_SETUP.md."
@@ -78,6 +80,8 @@ jobs:
         env:
           GF_SECURITY_ADMIN_PASSWORD: ${{ secrets.GF_SECURITY_ADMIN_PASSWORD }}
           PLANELYX_NETWORK: ${{ vars.PLANELYX_NETWORK }}
+          LISTRYX_NETWORK: ${{ vars.LISTRYX_NETWORK }}
+          AUTH_NETWORK: ${{ vars.AUTH_NETWORK }}
           MONITORING_HOST: ${{ vars.MONITORING_HOST }}
           PROM_RETENTION_TIME: ${{ vars.PROM_RETENTION_TIME }}
           PROM_RETENTION_SIZE: ${{ vars.PROM_RETENTION_SIZE }}
@@ -87,11 +91,13 @@ jobs:
 
           rendered=$(
               printf '# Rendered by .github/workflows/deploy.yml (run %s). Hand edits are lost.\n' "$GITHUB_RUN_ID"
-              printf 'COMPOSE_FILE=compose.yaml:projects/planelyx.compose.yaml\n'
+              printf 'COMPOSE_FILE=compose.yaml:projects/planelyx.compose.yaml:projects/listryx.compose.yaml:projects/auth.compose.yaml\n'
               printf 'PROM_TARGETS_DIR=./prometheus/targets/prod\n'
               printf 'GF_SERVER_ROOT_URL=%s\n' "$PUBLIC_URL"
               printf "GF_SECURITY_ADMIN_PASSWORD='%s'\n" "$GF_SECURITY_ADMIN_PASSWORD"
               printf 'PLANELYX_NETWORK=%s\n' "$PLANELYX_NETWORK"
+              printf 'LISTRYX_NETWORK=%s\n' "$LISTRYX_NETWORK"
+              printf 'AUTH_NETWORK=%s\n' "$AUTH_NETWORK"
               printf 'MONITORING_HOST=%s\n' "$MONITORING_HOST"
               printf 'PROM_RETENTION_TIME=%s\n' "${PROM_RETENTION_TIME:-30d}"
               printf 'PROM_RETENTION_SIZE=%s\n' "${PROM_RETENTION_SIZE:-8GB}"
